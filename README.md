@@ -2,7 +2,7 @@
 
 A lightweight, zero-dependency JavaScript template engine for the browser. Inspired by [Smarty PHP templates](https://www.smarty.net/) and borrowing heavily from [TrimPath JS Templates](https://code.google.com/archive/p/trimpath/wikis/JavaScriptTemplates.wiki), Sketch brings familiar, expressive templating syntax to the browser with modern additions like async rendering, layout inheritance, composable includes, and a rich filter system.
 
-Sketch can be used standalone or it can be used as the underlying rendering engine for the Flow.js library.
+Sketch can be used standalone or it can be used as the underlying rendering engine for the [Flow.js](https://github.com/oldmoe/flow.js) library.
 
 ---
 
