@@ -1,137 +1,29 @@
-# Sketch
+# Sketch.js
 
-A lightweight, zero-dependency JavaScript template engine for the browser. Sketch compiles HTML template strings into rendered output using a clean, readable syntax for interpolation, conditionals, loops, and layouts.
+A lightweight, zero-dependency JavaScript template engine for the browser. Inspired by [Smarty PHP templates](https://www.smarty.net/) and borrowing heavily from [TrimPath JS Templates](https://code.google.com/archive/p/trimpath/wikis/JavaScriptTemplates.wiki), Sketch brings familiar, expressive templating syntax to the browser with modern additions like async rendering, layout inheritance, composable includes, and a rich filter system.
 
----
-
-## Quick start
-
-```js
-Sketch.render(`<p>Hello, {{ name }}!</p>`, { name: 'Alice' })
-// → <p>Hello, Alice!</p>
-```
-
-Compile once, render many times:
-
-```js
-const tmpl = Sketch.compile(`<li>{{ item | upper }}</li>`);
-tmpl({ item: 'apple' }); // → <li>APPLE</li>
-tmpl({ item: 'pear'  }); // → <li>PEAR</li>
-```
+Sketch can be used standalone or it can be used as the underlying rendering engine for the Flow.js library.
 
 ---
 
-## Most common patterns
-
-These cover the vast majority of everyday use.
-
-### Interpolation — `{{ expr }}`
-
-Evaluates a JavaScript expression and outputs it HTML-escaped.
+## Quick Start
 
 ```html
-<p>{{ user.name }}</p>
-<p>{{ count + 1 }}</p>
-<p>{{ active ? 'Yes' : 'No' }}</p>
-```
-
-### Filters — `{{ expr | filter }}`
-
-Pipe a value through one or more named filters.
-
-```html
-{{ name | upper }}
-{{ price | currency }}
-{{ createdAt | date:'DD/MM/YYYY' }}
-{{ bio | default:No bio provided }}
-```
-
-Filters chain left-to-right:
-
-```html
-{{ name | trim | upper }}
-```
-
-### Conditionals — `{if}` / `{else}` / `{/if}`
-
-```html
-{if user.admin}
-  <strong>Admin</strong>
-{else}
-  <span>User</span>
-{/if}
-```
-
-### Loops — `{foreach items as item}` / `{/foreach}`
-
-```html
-<ul>
-{foreach products as p}
-  <li>{{ p.name }} — {{ p.price | currency }}</li>
-{/foreach}
-</ul>
-```
-
-Empty state with `{forelse}`:
-
-```html
-{foreach products as p}
-  <li>{{ p.name }}</li>
-{forelse}
-  <li>No products found.</li>
-{/foreach}
-```
-
-### Layouts — `render(tmpl, scope, { layout })`
-
-A layout wraps the rendered output of the inner template wherever `{yield}` appears.
-
-```js
-const layout = `<html><body><main>{yield}</main></body></html>`;
-const page   = `<h1>{{ title }}</h1>`;
-
-Sketch.render(page, { title: 'Home' }, { layout });
-// → <html><body><main><h1>Home</h1></main></body></html>
+<script src="sketch.js"></script>
+<script>
+  const html = Sketch.render(
+    `<h1>Hello, {{ name }}!</h1>`,
+    { name: 'World' }
+  );
+  document.body.innerHTML = html;
+</script>
 ```
 
 ---
 
-## Full reference
+## Core Concepts
 
-### `Sketch.render(template, scope, options?)`
-
-Compile and render in one call.
-
-| Argument   | Type     | Description                                      |
-|------------|----------|--------------------------------------------------|
-| `template` | `string` | The template string to render                    |
-| `scope`    | `object` | Variables available inside the template          |
-| `options`  | `object` | Optional. Currently supports `{ layout: string }`|
-
-```js
-Sketch.render(`{{ x }}`, { x: 42 });
-// → 42
-
-Sketch.render(`{{ x }}`, { x: 42 }, { layout: `[{yield}]` });
-// → [42]
-```
-
-### `Sketch.compile(template)`
-
-Returns a reusable render function `(scope?, options?) => string`. Use this when rendering the same template multiple times — it parses once and avoids repeated tokenization/AST building.
-
-```js
-const tmpl = Sketch.compile(`<p>{{ msg }}</p>`);
-tmpl({ msg: 'Hello' });   // → <p>Hello</p>
-tmpl({ msg: 'Goodbye' }); // → <p>Goodbye</p>
-```
-
-The compiled function also accepts layout options:
-
-```js
-tmpl({ msg: 'Hi' }, { layout: `<body>{yield}</body>` });
-// → <body><p>Hi</p></body>
-```
+Sketch templates are plain strings (or HTML) containing **expressions** and **block tags**. You pass a **scope** object whose properties become variables inside the template. Sketch compiles the template into an AST and renders it synchronously or asynchronously.
 
 ---
 
@@ -139,415 +31,488 @@ tmpl({ msg: 'Hi' }, { layout: `<body>{yield}</body>` });
 
 ### Escaped output — `{{ expr }}`
 
-Evaluates `expr` as a JavaScript expression in the current scope, then HTML-escapes the result. Special characters (`&`, `<`, `>`, `"`, `'`) are converted to their HTML entities. This is the default and safe choice for user-facing content.
+HTML-escapes the value before output. Use this for user-supplied data.
 
 ```html
-{{ name }}
-{{ user.profile.bio }}
-{{ items.length > 0 ? 'Has items' : 'Empty' }}
-{{ a + b }}
+<!-- scope: { name: '<script>alert(1)</script>' } -->
+<p>{{ name }}</p>
+<!-- output: <p>&lt;script&gt;alert(1)&lt;/script&gt;</p> -->
 ```
 
-If the value is `null` or `undefined`, an empty string is output.
-
-### Raw output — `{{{ expr }}}`
-
-Same as `{{ }}` but skips HTML escaping. Use for values you trust to already contain safe or intentional HTML. Also supports filters (see below).
+Any JavaScript expression is valid inside `{{ }}`:
 
 ```html
-{{{ htmlContent }}}
-{{{ data | json }}}
+{{ user.email }}
+{{ items.length }}
+{{ count > 0 ? 'items' : 'no items' }}
+{{ new Date().getFullYear() }}
 ```
 
-> **Warning:** never use `{{{ }}}` with user-supplied content — it will render any HTML or script tags as-is.
+### Raw (unescaped) output — `{{{ expr }}}`
+
+Outputs the value without escaping. Use for trusted HTML you want inserted verbatim.
+
+```html
+<!-- scope: { body: '<strong>Important</strong>' } -->
+{{{ body }}}
+<!-- output: <strong>Important</strong> -->
+```
+
+> ⚠️ Never use `{{{ }}}` with user-supplied input — it bypasses XSS protection.
 
 ---
 
 ## Filters
 
-Filters transform a value before it is output. They are appended with `|` after the expression. Any number of filters can be chained; they are applied left-to-right.
+Filters transform a value using a `|` pipe syntax. They can be chained. Arguments follow a `:` after the filter name.
 
 ```html
 {{ expr | filterName }}
-{{ expr | filterName:argument }}
-{{ expr | filter1 | filter2:arg | filter3 }}
+{{ expr | filterName:arg }}
+{{ expr | filter1 | filter2:arg }}
 ```
 
-Filters work with both `{{ }}` (output is escaped after filtering) and `{{{ }}}` (output is not escaped).
+Filters work in both `{{ }}` and `{{{ }}}` contexts.
 
-### Built-in filters
+### Built-in Filters
 
-#### `upper`
-Converts a string to uppercase.
-```html
-{{ 'hello' | upper }}  →  HELLO
-```
+| Filter | Description | Example |
+|---|---|---|
+| `upper` | Uppercase | `{{ name \| upper }}` → `ALICE` |
+| `lower` | Lowercase | `{{ name \| lower }}` → `alice` |
+| `trim` | Strip whitespace | `{{ input \| trim }}` |
+| `capitalize` | First letter uppercase | `{{ name \| capitalize }}` → `Alice` |
+| `length` | Array/string/object length | `{{ items \| length }}` |
+| `json` | JSON stringify | `{{ obj \| json }}`, `{{ obj \| json:4 }}` (indent) |
+| `default` | Fallback if null/empty | `{{ bio \| default:'No bio' }}` |
+| `round` | Round a number | `{{ price \| round:2 }}` |
+| `date` | Format a date | `{{ createdAt \| date:'DD/MM/YYYY' }}` |
+| `currency` | Format currency | `{{ price \| currency:'$':'2':'en-US' }}` |
+| `numunits` | Humanize large numbers | `{{ views \| numunits }}` → `1.23M` |
 
-#### `lower`
-Converts a string to lowercase.
-```html
-{{ 'WORLD' | lower }}  →  world
-```
+#### `date` format tokens
 
-#### `trim`
-Removes leading and trailing whitespace.
-```html
-{{ '  hi  ' | trim }}  →  hi
-```
-
-#### `length`
-Returns the length of a string or array, or the number of keys in an object.
-```html
-{{ 'hello' | length }}        →  5
-{{ [1,2,3] | length }}        →  3
-{{ {a:1, b:2} | length }}     →  2
-```
-
-#### `default:fallback`
-Returns `fallback` when the value is `null`, `undefined`, or an empty string. Otherwise returns the value unchanged.
-```html
-{{ user.bio | default:No bio yet }}
-{{ count | default:0 }}
-```
-
-#### `json`
-Serializes a value to a JSON string, indented by 2 spaces by default. Accepts an optional indentation argument.
-```html
-{{{ config | json }}}
-{{{ config | json:4 }}}
-```
-Use `{{{ }}}` (raw) rather than `{{ }}` to avoid `"` being escaped to `&quot;`.
-
-#### `date:format`
-Formats a date value (a `Date` object, ISO string, or timestamp) using a format string. Returns `[invalid date: ...]` if the value cannot be parsed.
-
-| Token | Meaning             |
-|-------|---------------------|
-| `YYYY`| 4-digit year        |
-| `YY`  | 2-digit year        |
-| `MM`  | 2-digit month       |
-| `DD`  | 2-digit day         |
-| `HH`  | 2-digit hours (24h) |
-| `mm`  | 2-digit minutes     |
-| `ss`  | 2-digit seconds     |
+`YYYY` `YY` `MM` `DD` `HH` `mm` `ss`
 
 ```html
-{{ createdAt | date:'DD/MM/YYYY' }}
-{{ updatedAt | date:'YYYY-MM-DD HH:mm' }}
+{{ createdAt | date:'DD/MM/YYYY HH:mm' }}
 ```
 
-#### `currency:symbol:decimals:locale`
-Formats a number as a currency string. All arguments are optional.
+#### `currency` arguments
 
-| Argument  | Default  | Description                  |
-|-----------|----------|------------------------------|
-| `symbol`  | `€`      | Prefix symbol                |
-| `decimals`| `2`      | Decimal places               |
-| `locale`  | `de-DE`  | BCP 47 locale for formatting |
+`currency:symbol:decimals:locale` (all optional, defaults: `€`, `2`, `de-DE`)
 
 ```html
-{{ price | currency }}
-{{ amount | currency:$:2:en-US }}
+{{ price | currency:'$':'2':'en-US' }}
 ```
 
-Returns `[invalid number: ...]` if the value is not numeric.
-
-### Custom filters
-
-Register your own filters with `Sketch.registerFilter(name, fn)`. The function receives the current value as its first argument, and the filter argument (if any) as the second.
-
-```js
-Sketch.registerFilter('truncate', (v, len = 100) => {
-  const s = String(v);
-  return s.length > len ? s.slice(0, len) + '…' : s;
-});
-
-Sketch.registerFilter('pluralize', (v, word) => {
-  return `${v} ${word}${v === 1 ? '' : 's'}`;
-});
-```
+#### Chaining filters
 
 ```html
-{{ post.body | truncate:200 }}
-{{ count | pluralize:item }}
+{{ description | trim | capitalize | default:'No description provided' }}
+{{ amount | round:2 | default:'0.00' }}
+```
+
+### Registering Custom Filters
+
+```javascript
+Sketch.registerFilter('slugify', (v) =>
+  String(v).toLowerCase().replace(/\s+/g, '-').replace(/[^\w-]/g, '')
+);
+
+// Usage in template:
+// {{ title | slugify }}
 ```
 
 ---
 
-## Conditionals
-
-### `{if expr}` / `{/if}`
-
-Renders the body only when `expr` is truthy.
-
-```html
-{if isLoggedIn}
-  <a href="/logout">Log out</a>
-{/if}
-```
-
-### `{if}` / `{else}` / `{/if}`
-
-```html
-{if stock > 0}
-  <button>Add to cart</button>
-{else}
-  <span>Out of stock</span>
-{/if}
-```
+## Control Flow
 
 ### `{if}` / `{elseif}` / `{else}` / `{/if}`
 
-Any number of `{elseif}` branches can be chained. The first truthy branch renders; the rest are skipped.
+Any JavaScript expression is valid as the condition.
 
 ```html
-{if score >= 90}
-  <span>A</span>
-{elseif score >= 80}
-  <span>B</span>
-{elseif score >= 70}
-  <span>C</span>
+{if user.role === 'admin'}
+  <a href="/admin">Admin Panel</a>
+{elseif user.role === 'editor'}
+  <a href="/editor">Editor Dashboard</a>
 {else}
-  <span>F</span>
+  <span>Welcome, {{ user.name }}!</span>
 {/if}
 ```
 
-### Nesting
-
-Conditionals and loops can be freely nested.
-
 ```html
-{if user}
-  {if user.admin}
-    <span>Admin: {{ user.name }}</span>
-  {else}
-    <span>User: {{ user.name }}</span>
-  {/if}
-{else}
-  <span>Guest</span>
+{if items.length > 0 && user.active}
+  <p>You have {{ items.length }} active items.</p>
 {/if}
 ```
 
 ---
 
-## Loops
+## Iteration
 
-### `{foreach collection as varName}` / `{/foreach}`
+### `{foreach arr as item}` / `{forelse}` / `{/foreach}`
 
-Iterates over an array. Inside the body, `varName` holds the current item and `varName_i` holds the zero-based index.
+Iterates over an **array**. Each iteration receives the item and `item_i` (zero-based index).
 
 ```html
-{foreach users as user}
-  <tr>
-    <td>{{ user_i + 1 }}</td>
-    <td>{{ user.name }}</td>
-    <td>{{ user.email }}</td>
+{foreach products as product}
+  <div class="product">
+    <h2>{{ product.name }}</h2>
+    <p>{{ product.price | currency:'$':'2':'en-US' }}</p>
+    {if product_i === 0}<span class="badge">Featured</span>{/if}
+  </div>
+{forelse}
+  <p>No products found.</p>
+{/foreach}
+```
+
+The loop variable index is always `varName_i`:
+
+```html
+{foreach rows as row}
+  <tr class="{if row_i % 2 === 0}even{else}odd{/if}">
+    <td>{{ row_i + 1 }}</td>
+    <td>{{ row.name }}</td>
   </tr>
 {/foreach}
 ```
 
-The collection expression is evaluated as JavaScript, so you can pass any expression that yields an array:
+`{forelse}` is rendered when the array is empty or absent.
+
+---
+
+### `{forin obj as key}` / `{forelse}` / `{/forin}`
+
+Iterates over **object own keys**. Each iteration receives the key name and `key_i` (zero-based counter). Access the value via `obj[key]`.
 
 ```html
-{foreach items.filter(i => i.active) as item}
-  <li>{{ item.name }}</li>
-{/foreach}
-```
-
-If the value is not an array, Sketch outputs an error message and logs to the console.
-
-### `{forelse}` inside `{foreach}`
-
-When the collection is empty, the `{forelse}` block renders instead of the loop body.
-
-```html
-{foreach notifications as n}
-  <div class="notification">{{ n.message }}</div>
-{forelse}
-  <div class="empty">You have no notifications.</div>
-{/foreach}
-```
-
-Without `{forelse}`, an empty array simply renders nothing.
-
-### `{forin obj as keyName}` / `{/forin}`
-
-Iterates over the own enumerable keys of an object. Inside the body, `keyName` holds the current key, `obj[keyName]` yields its value, and `keyName_i` holds the zero-based counter.
-
-```html
-{forin meta as key}
+{forin config as setting}
   <tr>
-    <td>{{ key }}</td>
-    <td>{{ meta[key] }}</td>
+    <td>{{ setting }}</td>
+    <td>{{ config[setting] }}</td>
   </tr>
-{/forin}
-```
-
-If the value is not a non-null object, Sketch outputs an error message and logs to the console.
-
-### `{forelse}` inside `{forin}`
-
-Same as with `{foreach}` — renders when the object has no own enumerable keys.
-
-```html
-{forin settings as key}
-  <li>{{ key }}: {{ settings[key] }}</li>
 {forelse}
-  <li>No settings configured.</li>
+  <tr><td colspan="2">No settings.</td></tr>
 {/forin}
 ```
 
 ---
 
-## Eval blocks
+## Inline JavaScript — `{eval}` / `{/eval}`
 
-### `{eval}` / `{/eval}`
+Execute arbitrary JavaScript inside a template. Variables declared with `const` or `let` inside an `{eval}` block are local to that block — they are **not** visible in the rest of the template.
 
-Executes arbitrary JavaScript inside the template. Variables assigned here are merged back into the scope and are available to all subsequent expressions in the same template. Use this sparingly for computed values that are cumbersome to pre-compute outside the template.
+To pass computed values to the rest of the template, assign them to the special `$` object, which is always available in scope:
 
 ```html
 {eval}
-  subtotal = items.reduce((sum, i) => sum + i.price * i.qty, 0);
-  tax      = subtotal * 0.2;
-  total    = subtotal + tax;
+  $.discount  = price > 100 ? 0.15 : 0.05;
+  $.finalPrice = price * (1 - $.discount);
+  $.label      = $.discount > 0.1 ? 'Big Saver' : 'Saver';
 {/eval}
 
-<p>Subtotal: {{ subtotal | currency }}</p>
-<p>Tax (20%): {{ tax | currency }}</p>
-<p>Total: {{ total | currency }}</p>
+<p>{{ $.label }}: {{ $.finalPrice | round:2 | currency }}</p>
 ```
 
-The code inside `{eval}` / `{/eval}` is plain JavaScript. It receives all current scope variables as local variables. Assignments become new scope entries visible to everything after the block.
+If you don't need a value outside the block — for example, a one-off side effect or a loop — you can skip assigning to `$`:
 
-> **Note:** `{eval}` blocks cannot `return` a value — use assignments instead.
+```html
+{eval}
+  console.log('rendering for user:', user.id);
+{/eval}
+```
+
+> Use `{eval}` for derived values and light computation. Avoid DOM manipulation or anything with side effects beyond the template.
 
 ---
 
-## Layouts and `{yield}`
+## Includes
 
-A layout is a second template that wraps the output of the primary (inner) template. Pass it via the `options` argument.
+Sketch can compose templates from multiple sources. The syntax is:
 
-```js
-const layout = `
+```
+{include source:identifier}
+```
+
+There are three include sources:
+
+### `{include key:name}` — pre-registered template strings
+
+Register templates by name and include them by key:
+
+```javascript
+Sketch.registerTemplate('user-card', `
+  <div class="user-card">
+    <strong>{{ user.name }}</strong>
+    <span>{{ user.email }}</span>
+  </div>
+`);
+```
+
+```html
+{foreach users as user}
+  {include key:user-card}
+{/foreach}
+```
+
+### `{include dom:#selector}` — from a DOM element
+
+The template content is read from the `innerHTML` of the matched element:
+
+```html
+<script type="text/sketch" id="alert-tpl">
+  <div class="alert alert-{{ level }}">{{ message }}</div>
+</script>
+```
+
+```html
+{include dom:#alert-tpl}
+```
+
+### `{include url:name}` — fetched from the server
+
+Fetches from `Sketch.templateURLPrefix + name + Sketch.templateURLSuffix` (defaults: `/templates/` and `.tpl.html`):
+
+```html
+{include url:partials/footer}
+<!-- fetches: /templates/partials/footer.tpl.html -->
+```
+
+URL includes require `renderAsync` or `compileAsync` (see [Async Rendering](#async-rendering)).
+
+---
+
+### Recursive Includes
+
+Includes are recursive — an included template can itself include others. Sketch detects and prevents circular includes, outputting an error message rather than looping infinitely.
+
+---
+
+## Layout Inheritance
+
+Sketch supports a simple layout system. Define a layout template with `{yield}` as a placeholder, then render a page template *inside* it.
+
+**Layout template (string or variable):**
+
+```html
 <!DOCTYPE html>
 <html>
-  <head><title>{{ title }}</title></head>
-  <body>
-    <nav>{{ siteName }}</nav>
-    <main>{yield}</main>
-    <footer>© {{ year }}</footer>
-  </body>
-</html>`;
-
-const page = `<h1>{{ title }}</h1><p>{{ body }}</p>`;
-
-Sketch.render(page, {
-  title:    'About Us',
-  body:     'We build things.',
-  siteName: 'Acme',
-  year:     2025
-}, { layout });
+<head><title>{{ title }}</title></head>
+<body>
+  <nav><!-- ... --></nav>
+  <main>
+    {yield}
+  </main>
+</body>
+</html>
 ```
 
-### How it works
+**Page template:**
 
-1. The inner template is rendered first using the provided scope.
-2. The rendered HTML string is stored internally as `$yield`.
-3. The layout is then rendered with the same scope, plus `$yield`.
-4. Wherever `{yield}` appears in the layout, the inner output is inserted **raw** (unescaped), since it is already-rendered HTML.
+```html
+<h1>{{ title }}</h1>
+<p>{{ body }}</p>
+```
 
-### Key points
+**Rendering with a layout:**
 
-- The layout and inner template share the same scope — all variables are available in both.
-- `{yield}` can appear anywhere in the layout, any number of times.
-- Layout templates support all the same features as regular templates: `{{ }}`, `{if}`, `{foreach}`, filters, etc.
-- Layouts compose well with `Sketch.compile()`:
+```javascript
+const layout = document.getElementById('layout-tpl').innerText;
+const page   = document.getElementById('page-tpl').innerText;
 
-```js
-const renderPage = Sketch.compile(`<article>{{{ content | default:Nothing here }}}</article>`);
+const html = Sketch.render(page, { title: 'Home', body: 'Welcome!' }, { layout });
+```
 
-renderPage({ content: '<p>Hello</p>' }, { layout });
+The page template is rendered first, then injected into the layout wherever `{yield}` appears.
+
+---
+
+## API Reference
+
+### `Sketch.render(templateStr, scope, options)`
+
+Compiles and immediately renders. Returns a string. Synchronous.
+
+```javascript
+const html = Sketch.render('<p>{{ msg }}</p>', { msg: 'Hello' });
+```
+
+Options:
+- `layout` — a layout template string; `{yield}` will be replaced with the rendered inner template.
+
+---
+
+### `Sketch.compile(templateStr)`
+
+Compiles a template string into a **reusable render function**. Useful when rendering the same template many times with different scopes.
+
+```javascript
+const render = Sketch.compile('<li>{{ item.name }}</li>');
+
+for (const item of items) {
+  list.innerHTML += render({ item });
+}
+```
+
+The returned function signature: `(scope?, options?) => string`
+
+---
+
+### `Sketch.renderAsync(templateStr, scope, options)`
+
+Like `render`, but async. Fetches all `url:` includes before rendering. Returns a `Promise<string>`.
+
+```javascript
+const html = await Sketch.renderAsync(template, data);
 ```
 
 ---
 
-## Raw HTML preservation
+### `Sketch.compileAsync(templateStr)`
 
-For use inside frameworks like Flow that manage nested template elements, Sketch exposes two utility methods to protect inner templates from being processed during an outer compilation pass.
+Like `compile`, but async. Fetches and caches all reachable `url:` includes at compile time, then returns a **synchronous** render function. Best for templates that include remote partials and will be called repeatedly.
 
-### `Sketch.preserve(html, selector?)`
-
-Finds elements with `flow`, `flow-link`, or `flow-form` attributes and replaces their `innerHTML` with a placeholder token. Returns the modified HTML string.
-
-```js
-const safe = Sketch.preserve(outerHtml, attrVal => attrVal.startsWith('my-'));
+```javascript
+const render = await Sketch.compileAsync(template);
+// render() is now synchronous and can be called multiple times:
+const html = render(data);
 ```
-
-### `Sketch.restore(html)`
-
-Replaces all placeholder tokens with their original content. Call this after the outer template has been compiled/rendered.
-
-```js
-const final = Sketch.restore(renderedHtml);
-```
-
-These methods are primarily intended for framework integrators rather than end-user template authors.
 
 ---
 
-## Error handling
+### `Sketch.prefetch(url)` / `Sketch.prefetchAll(...urls)`
 
-Sketch is designed to be resilient — errors are surfaced inline as descriptive strings rather than thrown exceptions, so a single broken expression does not break the entire render.
+Pre-warm the URL cache. Useful to load known remote partials before rendering begins.
 
-| Situation                              | Output                                                          |
-|----------------------------------------|-----------------------------------------------------------------|
-| JavaScript expression throws           | `[Sketch error: <message> in expr: <expr>]`                    |
-| Unknown filter name                    | `[Sketch error: unknown filter '<name>']`                      |
-| `{foreach}` given a non-array          | `[Sketch error: foreach expects an array, got <type> for: <expr>]` |
-| `{forin}` given a non-object           | `[Sketch error: forin expects an object, got <type> for: <expr>]` |
-| `{elseif}` / `{else}` without `{if}`  | `[Sketch error: elseif without if]`                            |
-| `{forelse}` outside a loop             | `[Sketch error: forelse without foreach/forin]`                |
-| Unclosed block tags                    | `[Sketch error: unclosed blocks: <type>]`                      |
-| Invalid `{foreach}` syntax             | `[Sketch error: invalid foreach: <raw>]`                       |
+```javascript
+await Sketch.prefetchAll('partials/nav', 'partials/footer');
+const html = Sketch.render(template, data); // url: includes now resolve synchronously
+```
 
-All errors are also logged to `console.error`.
+---
 
-Unknown directives (e.g. `{bogustag}`) are passed through to the output as-is rather than treated as errors.
+### `Sketch.registerTemplate(name, str)`
+
+Registers a template string under a key for use with `{include key:name}`.
+
+```javascript
+Sketch.registerTemplate('avatar', '<img src="{{ user.avatar }}" alt="{{ user.name }}">');
+```
+
+---
+
+### `Sketch.registerFilter(name, fn)`
+
+Adds a custom filter. `fn(value, arg?)` receives the piped value and an optional argument.
+
+```javascript
+Sketch.registerFilter('truncate', (v, len = 100) =>
+  String(v).length > len ? String(v).slice(0, len) + '…' : v
+);
+// {{ post.body | truncate:80 }}
+```
+
+---
+
+### `Sketch.escape(str)`
+
+Escapes `&`, `<`, `>`, `"`, `'` in a string. Used internally by `{{ }}`.
+
+---
+
+### `Sketch.preserve(html, selector?)` / `Sketch.restore(html)`
+
+Used by [Flow.js](./FLOW.md) to protect nested inline Flow templates from being processed by an outer Sketch render pass. You generally don't need these directly.
+
+---
+
+### Configuration
+
+| Property | Default | Description |
+|---|---|---|
+| `Sketch.templateURLPrefix` | `'/templates/'` | Prefix for `url:` include fetches |
+| `Sketch.templateURLSuffix` | `'.tpl.html'` | Suffix for `url:` include fetches |
 
 ---
 
 ## Scope
 
-The scope is a plain JavaScript object passed as the second argument to `render` or the compiled template function. Every key in the scope is available as a local variable inside template expressions.
+The scope object is the template's variable namespace. All own properties of the object become top-level variables:
 
-```js
-Sketch.render(`{{ x + y }}`, { x: 3, y: 4 }); // → 7
+```javascript
+Sketch.render('{{ a }} + {{ b }} = {{ a + b }}', { a: 1, b: 2 });
+// → "1 + 2 = 3"
 ```
 
-Sketch automatically adds a `$` key with an empty object `{}` to the scope if one is not provided. This gives templates a safe namespace for ad-hoc data without polluting the top-level scope.
+A special `$` object is always injected into scope as an empty object. It is the standard way to pass values computed inside `{eval}` blocks to the rest of the template, since `const`/`let` declared inside `{eval}` are block-scoped and not visible outside:
 
 ```html
-{eval}$.count = items.length;{/eval}
-{{ $.count }}
-```
+{eval}
+  $.total = items.reduce((s, i) => s + i.price, 0);
+  $.tax   = $.total * 0.2;
+{/eval}
 
-Within `{foreach}` and `{forin}` bodies, the child scope inherits all parent variables plus the loop variable and index. Mutations to parent-scope keys inside a loop do **not** propagate back to the parent scope — only `{eval}` blocks can mutate scope.
+Subtotal: {{ $.total | currency }}
+Tax:      {{ $.tax   | currency }}
+```
 
 ---
 
-## Template syntax summary
+## Error Handling
 
-| Syntax                              | Purpose                                          |
-|-------------------------------------|--------------------------------------------------|
-| `{{ expr }}`                        | Escaped output                                   |
-| `{{ expr \| filter }}`              | Escaped output with filter(s)                    |
-| `{{{ expr }}}`                      | Raw (unescaped) output                           |
-| `{{{ expr \| filter }}}`            | Raw output with filter(s)                        |
-| `{if expr}` … `{/if}`              | Conditional                                      |
-| `{if}` … `{elseif expr}` … `{/if}` | Multi-branch conditional                         |
-| `{if}` … `{else}` … `{/if}`        | If/else                                          |
-| `{foreach arr as v}` … `{/foreach}`| Array iteration                                  |
-| `{forin obj as k}` … `{/forin}`    | Object key iteration                             |
-| `{forelse}`                         | Empty branch inside `{foreach}` or `{forin}`     |
-| `{eval}` … `{/eval}`               | Execute JavaScript, mutate scope                 |
-| `{yield}`                           | Insert inner template output inside a layout     |
+Sketch never throws — errors are rendered inline as `[Sketch error: ...]` strings and also logged to `console.error`. This makes debugging easy in development without crashing your page.
+
+Common errors:
+- `[Sketch error: unknown filter 'xyz']`
+- `[Sketch error: foreach expects an array]`
+- `[Sketch error: circular include detected: url:partials/nav]`
+- `[Sketch error: unclosed blocks: if, foreach]`
+
+---
+
+## Complete Example
+
+```javascript
+const template = `
+  <h1>{{ store.name | upper }}</h1>
+  <p>{{ store.tagline | default:'Your online store' }}</p>
+
+  {if user}
+    <p>Welcome back, {{ user.name | capitalize }}!</p>
+  {else}
+    <a href="/login">Sign in</a>
+  {/if}
+
+  {eval}
+    $.inStock    = products.filter(p => p.stock > 0);
+    $.outOfStock = products.filter(p => p.stock === 0);
+  {/eval}
+
+  <h2>In Stock ({{ $.inStock.length }})</h2>
+  {foreach $.inStock as p}
+    <div class="card">
+      <strong>{{ p.name }}</strong>
+      <span>{{ p.price | currency:'$':'2':'en-US' }}</span>
+      {if p_i === 0}<span class="new">New!</span>{/if}
+    </div>
+  {forelse}
+    <p>All products sold out.</p>
+  {/foreach}
+
+  {if $.outOfStock.length > 0}
+    <p>{{ $.outOfStock.length }} items currently unavailable.</p>
+  {/if}
+`;
+
+const html = Sketch.render(template, {
+  store: { name: 'my shop', tagline: 'Great prices.' },
+  user: { name: 'alice' },
+  products: [
+    { name: 'Widget', price: 9.99,  stock: 10 },
+    { name: 'Gadget', price: 49.99, stock: 0  },
+    { name: 'Doohickey', price: 4.49, stock: 3 },
+  ]
+});
+```
