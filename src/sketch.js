@@ -20,7 +20,6 @@ class Sketch {
       return s.charAt(0).toUpperCase() + s.slice(1);
     },
 
-
     date: (v, fmt = 'YYYY-MM-DD') => {
       const d = v instanceof Date ? v : new Date(v);
       if (isNaN(d)) return `[invalid date: ${v}]`;
@@ -45,15 +44,13 @@ class Sketch {
     },
 
     numunits: (v) => {
-         const n = Number(v);
-            if (isNaN(n)) return `[invalid number: ${v}]`;  
-            if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
-            if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
-            if (n >= 1e3) return (n / 1e3).toFixed(2) + 'K';
-            return String(n);   
+      const n = Number(v);
+      if (isNaN(n)) return `[invalid number: ${v}]`;
+      if (n >= 1e9) return (n / 1e9).toFixed(2) + 'B';
+      if (n >= 1e6) return (n / 1e6).toFixed(2) + 'M';
+      if (n >= 1e3) return (n / 1e3).toFixed(2) + 'K';
+      return String(n);
     }
-
-
   };
 
   static registerFilter(name, fn) {
@@ -69,7 +66,7 @@ class Sketch {
     this._templates[name] = str;
   }
 
-  // ─── Template UR Prefix ─────────────────────────────────────────────────────
+  // ─── Template URL Prefix ────────────────────────────────────────────────────
 
   static templateURLPrefix = '/templates/';
   static templateURLSuffix = '.tpl.html';
@@ -122,39 +119,35 @@ class Sketch {
   }
 
   static preserve(html, selector) {
-    const tags = ['table','thead','tbody','tfoot','tr','th','td'];
-    const re = new RegExp(`<(\/?)(${ tags.join('|') })(\\s[^>]*?)?>`, 'gi');
+    const tmp = document.createElement('template');
+    tmp.innerHTML = html;
 
-    const safe = html.replace(re, (_, slash, tag, attrs) =>
-        `<${slash}sketch-${tag.toLowerCase()}${attrs || ''}>`
-    );
+    tmp.content.querySelectorAll('script:not([flow-script]):not([flow]):not([flow-link]):not([flow-form]):not([flow-template])').forEach(el => {
+      const id = this._counter++;
+      this._preserved.set(id, el.innerHTML);
+      el.innerHTML = `${this.PLACEHOLDER}${id}__`;
+    });
 
-    const tmp = document.createElement('div');
-    tmp.innerHTML = safe;
-
-    tmp.querySelectorAll('[flow],[flow-link],[flow-form],[flow-template]').forEach(el => {
-        const attrVal =
+    tmp.content.querySelectorAll('[flow],[flow-link],[flow-form],[flow-template]').forEach(el => {
+      const attrVal =
         el.getAttribute('flow') ||
         el.getAttribute('flow-link') ||
         el.getAttribute('flow-form') ||
         el.getAttribute('flow-template') || '';
-        if (selector && !selector(attrVal)) return;
-        const id = this._counter++;
-        this._preserved.set(id, el.innerHTML);
-        el.innerHTML = `${this.PLACEHOLDER}${id}__`;
+      if (selector && !selector(attrVal)) return;
+      const id = this._counter++;
+      this._preserved.set(id, el.innerHTML);
+      el.innerHTML = `${this.PLACEHOLDER}${id}__`;
     });
 
     return tmp.innerHTML
-        .replace(/<(\/?)sketch-(table|thead|tbody|tfoot|tr|th|td)(\s[^>]*)?>/gi,
-        (_, slash, tag, attrs) => `<${slash}${tag}${attrs || ''}>`)
-        .replace(/(\{\{\{[\s\S]*?\}\}\}|\{\{[\s\S]*?\}\}|\{[^}]*\})/g,
+      .replace(/(\{\{\{[\s\S]*?\}\}\}|\{\{[\s\S]*?\}\}|\{[^}]*\})/g,
         token => this._decodeEntities(token));
-    }
+  }
 
   static restore(html) {
     return html.replace(this.PLACEHOLDER_RE, (match, id) => {
       const content = this._preserved.get(Number(id));
-      this._preserved.delete(Number(id));
       return content !== undefined ? content : match;
     });
   }
@@ -167,43 +160,16 @@ class Sketch {
       let filterName, filterArg;
       if (colonIdx !== -1) {
         filterName = filterExpr.slice(0, colonIdx).trim();
-        filterArg = filterExpr.slice(colonIdx + 1).trim().replace(/^['"]|['"]$/g, '');
+        filterArg  = filterExpr.slice(colonIdx + 1).trim().replace(/^['"]|['"]$/g, '');
       } else {
         filterName = filterExpr.trim();
-        filterArg = undefined;
+        filterArg  = undefined;
       }
       const fn = this._filters[filterName];
-      if (!fn) {
-        return `[Sketch error: unknown filter '${filterName}']`;
-      }
+      if (!fn) return `[Sketch error: unknown filter '${filterName}']`;
       value = filterArg !== undefined ? fn(value, filterArg) : fn(value);
     }
     return value;
-  }
-
-  // ─── Expression Evaluator ───────────────────────────────────────────────────
-
-  static _evaluate(expr, scope) {
-    try {
-      const fn = new Function(...Object.keys(scope), `return (${expr});`);
-      return fn(...Object.values(scope));
-    } catch (e) {
-      const msg = `[Sketch error: ${e.message} in expr: ${expr.trim()}]`;
-      console.error('Sketch:', msg);
-      return msg;
-    }
-  }
-
-  static _evaluateVoid(code, scope) {
-    try {
-      const fn = new Function(...Object.keys(scope), code);
-      fn(...Object.values(scope));
-    } catch (e) {
-      const msg = `[Sketch error: ${e.message} in eval block]`;
-      console.error('Sketch:', msg, '\n', code);
-      return msg;
-    }
-    return null;
   }
 
   // ─── Tokenizer ──────────────────────────────────────────────────────────────
@@ -225,6 +191,7 @@ class Sketch {
       eval       — {eval}
       endeval    — {/eval}
       yield      — {yield}    (inside a layout template, outputs the rendered inner template)
+      include    — {include key:name} / {include dom:selector} / {include url:path}
   */
 
   static _tokenize(template) {
@@ -243,72 +210,42 @@ class Sketch {
       if (raw.startsWith('{{{')) {
         const inner = raw.slice(3, -3).trim();
         const parts = inner.split('|').map(s => s.trim());
-        const expr = parts[0];
-        const filters = parts.slice(1);
-        tokens.push({ type: 'raw', expr, filters });
+        tokens.push({ type: 'raw', expr: parts[0], filters: parts.slice(1) });
 
       } else if (raw.startsWith('{{')) {
         const inner = raw.slice(2, -2).trim();
         const parts = inner.split('|').map(s => s.trim());
-        const expr = parts[0];
-        const filters = parts.slice(1);
-        tokens.push({ type: 'escaped', expr, filters });
+        tokens.push({ type: 'escaped', expr: parts[0], filters: parts.slice(1) });
 
       } else {
-        const inner = raw.slice(1, -1).trim();
+        const inner    = raw.slice(1, -1).trim();
         const spaceIdx = inner.search(/\s/);
-        const keyword = spaceIdx === -1 ? inner : inner.slice(0, spaceIdx);
-        const rest = spaceIdx === -1 ? '' : inner.slice(spaceIdx + 1).trim();
+        const keyword  = spaceIdx === -1 ? inner : inner.slice(0, spaceIdx);
+        const rest     = spaceIdx === -1 ? '' : inner.slice(spaceIdx + 1).trim();
 
         switch (keyword) {
-          case 'if':
-            tokens.push({ type: 'if', expr: rest });
-            break;
-          case 'elseif':
-            tokens.push({ type: 'elseif', expr: rest });
-            break;
-          case 'else':
-            tokens.push({ type: 'else' });
-            break;
-          case '/if':
-            tokens.push({ type: 'endif' });
-            break;
+          case 'if':        tokens.push({ type: 'if',        expr: rest }); break;
+          case 'elseif':    tokens.push({ type: 'elseif',    expr: rest }); break;
+          case 'else':      tokens.push({ type: 'else' });                  break;
+          case '/if':       tokens.push({ type: 'endif' });                 break;
           case 'foreach': {
             const m = rest.match(/^(.+?)\s+as\s+(\w+)$/);
-            if (!m) {
-              tokens.push({ type: 'text', value: `[Sketch error: invalid foreach: ${raw}]` });
-            } else {
-              tokens.push({ type: 'foreach', collectionExpr: m[1].trim(), varName: m[2] });
-            }
+            if (!m) tokens.push({ type: 'text', value: `[Sketch error: invalid foreach: ${raw}]` });
+            else    tokens.push({ type: 'foreach', collectionExpr: m[1].trim(), varName: m[2] });
             break;
           }
-          case 'forelse':
-            tokens.push({ type: 'forelse' });
-            break;
-          case '/foreach':
-            tokens.push({ type: 'endforeach' });
-            break;
+          case 'forelse':   tokens.push({ type: 'forelse' });               break;
+          case '/foreach':  tokens.push({ type: 'endforeach' });            break;
           case 'forin': {
             const m = rest.match(/^(.+?)\s+as\s+(\w+)$/);
-            if (!m) {
-              tokens.push({ type: 'text', value: `[Sketch error: invalid forin: ${raw}]` });
-            } else {
-              tokens.push({ type: 'forin', objExpr: m[1].trim(), keyName: m[2] });
-            }
+            if (!m) tokens.push({ type: 'text', value: `[Sketch error: invalid forin: ${raw}]` });
+            else    tokens.push({ type: 'forin', objExpr: m[1].trim(), keyName: m[2] });
             break;
           }
-          case '/forin':
-            tokens.push({ type: 'endforin' });
-            break;
-          case 'eval':
-            tokens.push({ type: 'eval' });
-            break;
-          case '/eval':
-            tokens.push({ type: 'endeval' });
-            break;
-          case 'yield':
-            tokens.push({ type: 'yield' });
-            break;
+          case '/forin':    tokens.push({ type: 'endforin' });              break;
+          case 'eval':      tokens.push({ type: 'eval' });                  break;
+          case '/eval':     tokens.push({ type: 'endeval' });               break;
+          case 'yield':     tokens.push({ type: 'yield' });                 break;
           case 'include': {
             const colonIdx = rest.indexOf(':');
             if (colonIdx === -1) {
@@ -343,23 +280,22 @@ class Sketch {
 
   /*
     Nodes:
-      { type: 'text', value }
-      { type: 'raw', expr }
+      { type: 'text',    value }
+      { type: 'raw',     expr, filters }
       { type: 'escaped', expr, filters }
-      { type: 'if', branches: [{condition, body},...], elseBranch }
+      { type: 'if',      branches: [{condition, body},...], elseBranch }
       { type: 'foreach', collectionExpr, varName, body, elseBranch }
-      { type: 'forin', objExpr, keyName, body, elseBranch }
-      { type: 'eval', chunks }
+      { type: 'forin',   objExpr, keyName, body, elseBranch }
+      { type: 'eval',    chunks }
       { type: 'yield' }
+      { type: 'include', source, value }
   */
 
   static _buildAST(tokens) {
-    const stack = [[]];
-
-    const current = () => stack[stack.length - 1];
-    const push = (frame) => stack.push(frame);
-    const pop = () => stack.pop();
-
+    const stack    = [[]];
+    const current  = () => stack[stack.length - 1];
+    const push     = (frame) => stack.push(frame);
+    const pop      = () => stack.pop();
     const ctxStack = [];
 
     for (const tok of tokens) {
@@ -383,10 +319,7 @@ class Sketch {
 
         case 'elseif': {
           const ctx = ctxStack[ctxStack.length - 1];
-          if (!ctx || ctx.type !== 'if') {
-            current().push({ type: 'text', value: '[Sketch error: elseif without if]' });
-            break;
-          }
+          if (!ctx || ctx.type !== 'if') { current().push({ type: 'text', value: '[Sketch error: elseif without if]' }); break; }
           pop();
           const branch = { condition: tok.expr, body: [] };
           ctx.node.branches.push(branch);
@@ -396,10 +329,7 @@ class Sketch {
 
         case 'else': {
           const ctx = ctxStack[ctxStack.length - 1];
-          if (!ctx || ctx.type !== 'if') {
-            current().push({ type: 'text', value: '[Sketch error: else without if]' });
-            break;
-          }
+          if (!ctx || ctx.type !== 'if') { current().push({ type: 'text', value: '[Sketch error: else without if]' }); break; }
           pop();
           ctx.node.elseBranch = [];
           push(ctx.node.elseBranch);
@@ -408,10 +338,7 @@ class Sketch {
 
         case 'endif': {
           const ctx = ctxStack[ctxStack.length - 1];
-          if (!ctx || ctx.type !== 'if') {
-            current().push({ type: 'text', value: '[Sketch error: /if without if]' });
-            break;
-          }
+          if (!ctx || ctx.type !== 'if') { current().push({ type: 'text', value: '[Sketch error: /if without if]' }); break; }
           pop();
           ctxStack.pop();
           break;
@@ -439,7 +366,7 @@ class Sketch {
             current().push({ type: 'text', value: '[Sketch error: forelse without foreach/forin]' });
             break;
           }
-          pop(); // close the body
+          pop();
           ctx.node.elseBranch = [];
           push(ctx.node.elseBranch);
           break;
@@ -447,10 +374,7 @@ class Sketch {
 
         case 'endforeach': {
           const ctx = ctxStack[ctxStack.length - 1];
-          if (!ctx || ctx.type !== 'foreach') {
-            current().push({ type: 'text', value: '[Sketch error: /foreach without foreach]' });
-            break;
-          }
+          if (!ctx || ctx.type !== 'foreach') { current().push({ type: 'text', value: '[Sketch error: /foreach without foreach]' }); break; }
           pop();
           ctxStack.pop();
           break;
@@ -458,10 +382,7 @@ class Sketch {
 
         case 'endforin': {
           const ctx = ctxStack[ctxStack.length - 1];
-          if (!ctx || ctx.type !== 'forin') {
-            current().push({ type: 'text', value: '[Sketch error: /forin without forin]' });
-            break;
-          }
+          if (!ctx || ctx.type !== 'forin') { current().push({ type: 'text', value: '[Sketch error: /forin without forin]' }); break; }
           pop();
           ctxStack.pop();
           break;
@@ -477,10 +398,7 @@ class Sketch {
 
         case 'endeval': {
           const ctx = ctxStack[ctxStack.length - 1];
-          if (!ctx || ctx.type !== 'eval') {
-            current().push({ type: 'text', value: '[Sketch error: /eval without eval]' });
-            break;
-          }
+          if (!ctx || ctx.type !== 'eval') { current().push({ type: 'text', value: '[Sketch error: /eval without eval]' }); break; }
           pop();
           ctxStack.pop();
           break;
@@ -497,127 +415,237 @@ class Sketch {
     return stack[0];
   }
 
-  // ─── Renderer ───────────────────────────────────────────────────────────────
+  // ─── Code Generator ─────────────────────────────────────────────────────────
 
-  static _renderAST(nodes, scope, _stack = new Set()) {
-    let out = '';
+  /*
+    Walks the AST and emits a flat JS function body string.
 
+    Include nodes are resolved and inlined at this stage — their child AST is
+    recursed into directly, so the entire template (parent + all includes) becomes
+    one flat JS function. This means all variables — scope keys, loop vars, eval
+    vars — are naturally visible everywhere, with no snapshot or scope-passing needed.
+
+    Circular includes are detected at compile time via a `stack` Set threaded
+    through recursive calls.
+  */
+
+  static _uid = 0; // unique counter for loop variable names to avoid shadowing
+
+  // stack: Set of include keys currently being compiled, for circular detection.
+  // Includes are resolved and inlined at compile time so all variables —
+  // loop vars, eval vars, scope vars — are naturally visible inside included
+  // templates without any snapshot or scope-passing machinery.
+  static _generateCode(nodes, lines = [], stack = new Set()) {
     for (const node of nodes) {
       switch (node.type) {
 
-        case 'text':
-          out += node.value;
-          break;
-
-        case 'raw': {
-          let val = this._evaluate(node.expr, scope);
-          if (node.filters && node.filters.length) {
-            val = this._applyFilters(val, node.filters);
-          }
-          out += (val == null ? '' : val);
+        case 'text': {
+          lines.push(`__out__ += ${JSON.stringify(node.value)};`);
           break;
         }
 
         case 'escaped': {
-          let val = this._evaluate(node.expr, scope);
-          if (node.filters && node.filters.length) {
-            val = this._applyFilters(val, node.filters);
-          }
-          out += this.escape(val == null ? '' : val);
+          const expr = this._filterExpr(node.expr, node.filters, true);
+          lines.push(`__out__ += ${expr};`);
+          break;
+        }
+
+        case 'raw': {
+          const uid  = this._uid++;
+          const expr = this._filterExpr(node.expr, node.filters, false);
+          lines.push(`{ const __raw_${uid}__ = ${expr}; __out__ += __raw_${uid}__ == null ? '' : __raw_${uid}__; }`);
           break;
         }
 
         case 'if': {
-          let rendered = false;
-          for (const branch of node.branches) {
-            const cond = this._evaluate(branch.condition, scope);
-            if (cond) {
-              out += this._renderAST(branch.body, scope);
-              rendered = true;
-              break;
-            }
+          node.branches.forEach((branch, i) => {
+            lines.push(`${i === 0 ? 'if' : '} else if'} (${branch.condition}) {`);
+            this._generateCode(branch.body, lines, stack);
+          });
+          if (node.elseBranch) {
+            lines.push(`} else {`);
+            this._generateCode(node.elseBranch, lines, stack);
           }
-          if (!rendered && node.elseBranch) {
-            out += this._renderAST(node.elseBranch, scope);
-          }
+          lines.push(`}`);
           break;
         }
 
         case 'foreach': {
-          const collection = this._evaluate(node.collectionExpr, scope);
-          if (!Array.isArray(collection)) {
-            out += `[Sketch error: foreach expects an array, got ${typeof collection} for: ${node.collectionExpr}]`;
-            console.error('Sketch: foreach got non-array:', node.collectionExpr, collection);
-            break;
+          const uid  = this._uid++;
+          const coll = `__coll_${uid}__`;
+          lines.push(`{`);
+          lines.push(`  const ${coll} = (${node.collectionExpr});`);
+          lines.push(`  if (!Array.isArray(${coll})) {`);
+          lines.push(`    __out__ += \`[Sketch error: foreach expects an array, got \${typeof ${coll}} for: ${node.collectionExpr.replace(/\`/g, '\\`')}]\`;`);
+          lines.push(`  } else if (${coll}.length === 0) {`);
+          if (node.elseBranch && node.elseBranch.length) {
+            this._generateCode(node.elseBranch, lines, stack);
           }
-          if (collection.length === 0) {
-            if (node.elseBranch) out += this._renderAST(node.elseBranch, scope);
-            break;
-          }
-          collection.forEach((item, index) => {
-            const childScope = Object.assign({}, scope, {
-              [node.varName]: item,
-              [`${node.varName}_i`]: index
-            });
-            out += this._renderAST(node.body, childScope);
-          });
+          lines.push(`  } else {`);
+          lines.push(`    for (let __i_${uid}__ = 0; __i_${uid}__ < ${coll}.length; __i_${uid}__++) {`);
+          lines.push(`      let ${node.varName} = ${coll}[__i_${uid}__];`);
+          lines.push(`      let ${node.varName}_i = __i_${uid}__;`);
+          this._generateCode(node.body, lines, stack);
+          lines.push(`    }`);
+          lines.push(`  }`);
+          lines.push(`}`);
           break;
         }
 
         case 'forin': {
-          const obj = this._evaluate(node.objExpr, scope);
-          if (typeof obj !== 'object' || obj === null) {
-            out += `[Sketch error: forin expects an object, got ${typeof obj} for: ${node.objExpr}]`;
-            console.error('Sketch: forin got non-object:', node.objExpr, obj);
-            break;
+          const uid  = this._uid++;
+          const keys = `__keys_${uid}__`;
+          const obj  = `__obj_${uid}__`;
+          lines.push(`{`);
+          lines.push(`  const ${obj} = (${node.objExpr});`);
+          lines.push(`  if (typeof ${obj} !== 'object' || ${obj} === null) {`);
+          lines.push(`    __out__ += \`[Sketch error: forin expects an object, got \${typeof ${obj}} for: ${node.objExpr.replace(/\`/g, '\\`')}]\`;`);
+          lines.push(`  } else {`);
+          lines.push(`    const ${keys} = Object.keys(${obj}).filter(k => Object.prototype.hasOwnProperty.call(${obj}, k));`);
+          lines.push(`    if (${keys}.length === 0) {`);
+          if (node.elseBranch && node.elseBranch.length) {
+            this._generateCode(node.elseBranch, lines, stack);
           }
-          const keys = Object.keys(obj).filter(k => Object.prototype.hasOwnProperty.call(obj, k));
-          if (keys.length === 0) {
-            if (node.elseBranch) out += this._renderAST(node.elseBranch, scope);
-            break;
-          }
-          keys.forEach((key, counter) => {
-            const childScope = Object.assign({}, scope, {
-              [node.keyName]: key,
-              [`${node.keyName}_i`]: counter
-            });
-            out += this._renderAST(node.body, childScope);
-          });
+          lines.push(`    } else {`);
+          lines.push(`      for (let __i_${uid}__ = 0; __i_${uid}__ < ${keys}.length; __i_${uid}__++) {`);
+          lines.push(`        let ${node.keyName} = ${keys}[__i_${uid}__];`);
+          lines.push(`        let ${node.keyName}_i = __i_${uid}__;`);
+          this._generateCode(node.body, lines, stack);
+          lines.push(`      }`);
+          lines.push(`    }`);
+          lines.push(`  }`);
+          lines.push(`}`);
           break;
         }
 
         case 'eval': {
-          const code = node.chunks.map(c => c.value || '').join('');
-          const mutatedScope = Object.assign({}, scope);
-          const err = this._evaluateVoid(code, mutatedScope);
-          if (err) out += err;
-          Object.assign(scope, mutatedScope);
+          // Inline verbatim — all variables declared here are visible to
+          // subsequent nodes, including inside included templates.
+          const code = Sketch._decodeEntities(node.chunks.map(c => c.value || '').join(''));
+          lines.push(`// {eval}`);
+          lines.push(code);
+          lines.push(`// {/eval}`);
           break;
         }
 
         case 'yield': {
-          // Output the pre-rendered inner template content (raw, already HTML)
-          out += (scope.$yield == null ? '' : scope.$yield);
+          lines.push(`__out__ += (__scope__.$yield == null ? '' : __scope__.$yield);`);
           break;
         }
 
         case 'include': {
+          // Resolve and inline the child AST at compile time.
+          // Since the child code lands in the same function body, all variables
+          // (scope, loop, eval) are visible inside includes for free.
           const key = `${node.source}:${node.value}`;
-          if (_stack && _stack.has(key)) {
-            out += `[Sketch error: circular include detected: ${key}]`;
+          if (stack.has(key)) {
+            lines.push(`__out__ += ${JSON.stringify(`[Sketch error: circular include detected: ${key}]`)};`);
             break;
           }
           const resolved = this._resolveIncludeSync(node.source, node.value);
-          if (resolved.error) { out += resolved.error; break; }
-          const childStack = new Set(_stack || []).add(key);
-          const childAST = this._buildAST(this._tokenize(resolved.str));
-          out += this._renderAST(childAST, scope, childStack);
+          if (resolved.error) {
+            lines.push(`__out__ += ${JSON.stringify(resolved.error)};`);
+            break;
+          }
+          const childAST   = this._buildAST(this._tokenize(resolved.str));
+          const childStack = new Set(stack).add(key);
+          lines.push(`// {include ${key}}`);
+          this._generateCode(childAST, lines, childStack);
+          lines.push(`// {/include ${key}}`);
           break;
         }
       }
     }
+    return lines;
+  }
 
+  // Emit a filter chain as a JS expression string.
+  // If `escape` is true, wrap in __sketch__.escape().
+  static _filterExpr(expr, filters, escape) {
+    let out = `(${expr})`;
+    if (filters && filters.length) {
+      // Build filter args as a JSON array literal
+      const filtersJson = JSON.stringify(filters);
+      out = `__sketch__._applyFilters(${out}, ${filtersJson})`;
+    }
+    if (escape) {
+      out = `__sketch__.escape(${out} == null ? '' : ${out})`;
+    }
     return out;
+  }
+
+  // ─── Compiler ───────────────────────────────────────────────────────────────
+
+  /*
+    _compileAST(ast) → function(__sketch__, __scope__) → string
+
+    Walks the AST once at compile time, emitting a JS function body string.
+    Includes are resolved and inlined at this stage too, so the entire
+    template — parent + all includes — becomes one flat function.
+
+    The generated function is cached by scope shape (the set of variable names
+    in __scope__). First call with a given shape pays one `new Function` cost;
+    all subsequent calls are free.
+  */
+
+  static _compileAST(ast) {
+    const codeLines = [];
+    this._generateCode(ast, codeLines);
+
+    const body = codeLines.join('\n');
+
+    // Cache inner functions keyed by scope shape (null-separated key names).
+    const cache = {};
+    return function(__sketch__, __scope__) {
+      const keys = Object.keys(__scope__);
+      const sig  = keys.join('\x00');
+
+      if (!cache[sig]) {
+        //console.log(`Sketch: compiling template for scope shape: ${sig || '[empty]'}`);
+        const innerBody = `let __out__ = '';\n${body}\nreturn __out__;`;
+        //console.log(__scope__);
+        const innerFn   = new Function('__sketch__', '__scope__', ...keys, innerBody);
+        cache[sig] = (__s, __sc) => innerFn(__s, __sc, ...Object.values(__sc));
+      }
+
+      return cache[sig](__sketch__, __scope__);
+    };
+  }
+
+  // ─── Public API ─────────────────────────────────────────────────────────────
+
+  /**
+   * Compile a template string into a reusable render function.
+   * @param {string} templateStr
+   * @returns {function(scope?: object, options?: { layout?: string }): string}
+   */
+  static compile(templateStr) {
+    const ast        = this._buildAST(this._tokenize(templateStr));
+    const renderFn   = this._compileAST(ast);
+
+    return (scope = {}, options = {}) => {
+      const baseScope = Object.assign({ $: {} }, scope);
+      const inner     = renderFn(this, baseScope);
+
+      if (options.layout) {
+        const layoutFn    = this._compileAST(this._buildAST(this._tokenize(options.layout)));
+        const layoutScope = Object.assign({}, baseScope, { $yield: inner });
+        return layoutFn(this, layoutScope);
+      }
+
+      return inner;
+    };
+  }
+
+  /**
+   * Compile and immediately render with the given scope.
+   * @param {string} templateStr
+   * @param {object} scope
+   * @param {{ layout?: string }} options
+   * @returns {string}
+   */
+  static render(templateStr, scope = {}, options = {}) {
+    return this.compile(templateStr)(scope, options);
   }
 
   // ─── Include Resolution ─────────────────────────────────────────────────────
@@ -648,8 +676,8 @@ class Sketch {
         const raw = await res.text();
         const tmp = document.createElement('textarea');
         tmp.innerHTML = raw;
-        const str = tmp.value;
-        this._urlCache.set(value, str);        
+        const str = this.preserve(tmp.value);
+        this._urlCache.set(value, str);
         return { str };
       } catch (e) {
         return { error: `[Sketch error: fetch error for '${value}': ${e.message}]` };
@@ -658,151 +686,12 @@ class Sketch {
     return this._resolveIncludeSync(source, value);
   }
 
-  // ─── Async Renderer ─────────────────────────────────────────────────────────
-
-  static async _renderASTAsync(nodes, scope, _stack = new Set()) {
-    let out = '';
-
-    for (const node of nodes) {
-      switch (node.type) {
-
-        case 'text':
-          out += node.value;
-          break;
-
-        case 'raw': {
-          let val = this._evaluate(node.expr, scope);
-          if (node.filters && node.filters.length) val = this._applyFilters(val, node.filters);
-          out += (val == null ? '' : val);
-          break;
-        }
-
-        case 'escaped': {
-          let val = this._evaluate(node.expr, scope);
-          if (node.filters && node.filters.length) val = this._applyFilters(val, node.filters);
-          out += this.escape(val == null ? '' : val);
-          break;
-        }
-
-        case 'if': {
-          let rendered = false;
-          for (const branch of node.branches) {
-            if (this._evaluate(branch.condition, scope)) {
-              out += await this._renderASTAsync(branch.body, scope, _stack);
-              rendered = true;
-              break;
-            }
-          }
-          if (!rendered && node.elseBranch) {
-            out += await this._renderASTAsync(node.elseBranch, scope, _stack);
-          }
-          break;
-        }
-
-        case 'foreach': {
-          const collection = this._evaluate(node.collectionExpr, scope);
-          if (!Array.isArray(collection)) {
-            out += `[Sketch error: foreach expects an array, got ${typeof collection} for: ${node.collectionExpr}]`;
-            break;
-          }
-          if (collection.length === 0) {
-            if (node.elseBranch) out += await this._renderASTAsync(node.elseBranch, scope, _stack);
-            break;
-          }
-          for (const [index, item] of collection.entries()) {
-            const childScope = Object.assign({}, scope, { [node.varName]: item, [`${node.varName}_i`]: index });
-            out += await this._renderASTAsync(node.body, childScope, _stack);
-          }
-          break;
-        }
-
-        case 'forin': {
-          const obj = this._evaluate(node.objExpr, scope);
-          if (typeof obj !== 'object' || obj === null) {
-            out += `[Sketch error: forin expects an object, got ${typeof obj} for: ${node.objExpr}]`;
-            break;
-          }
-          const keys = Object.keys(obj).filter(k => Object.prototype.hasOwnProperty.call(obj, k));
-          if (keys.length === 0) {
-            if (node.elseBranch) out += await this._renderASTAsync(node.elseBranch, scope, _stack);
-            break;
-          }
-          for (const [counter, key] of keys.entries()) {
-            const childScope = Object.assign({}, scope, { [node.keyName]: key, [`${node.keyName}_i`]: counter });
-            out += await this._renderASTAsync(node.body, childScope, _stack);
-          }
-          break;
-        }
-
-        case 'eval': {
-          const code = node.chunks.map(c => c.value || '').join('');
-          const mutatedScope = Object.assign({}, scope);
-          const err = this._evaluateVoid(code, mutatedScope);
-          if (err) out += err;
-          Object.assign(scope, mutatedScope);
-          break;
-        }
-
-        case 'yield':
-          out += (scope.$yield == null ? '' : scope.$yield);
-          break;
-
-        case 'include': {
-          const key = `${node.source}:${node.value}`;
-          if (_stack.has(key)) {
-            out += `[Sketch error: circular include detected: ${key}]`;
-            break;
-          }
-          const resolved = await this._resolveIncludeAsync(node.source, node.value);
-          if (resolved.error) { out += resolved.error; break; }
-          const childStack = new Set(_stack).add(key);
-          const childAST = this._buildAST(this._tokenize(resolved.str));
-          out += await this._renderASTAsync(childAST, scope, childStack);
-          break;
-        }
-      }
-    }
-
-    return out;
-  }
-
-  /**
-   * Compile a template string into a reusable render function.
-   * @param {string} templateStr
-   * @returns {function(scope?: object, options?: { layout?: string }): string}
-   */
-  static compile(templateStr) {
-    const tokens = this._tokenize(templateStr);
-    const ast = this._buildAST(tokens);
-    return (scope = {}, options = {}) => {
-      const baseScope = Object.assign({ $: {} }, scope);
-      const inner = this._renderAST(ast, baseScope);
-      if (options.layout) {
-        const layoutTokens = this._tokenize(options.layout);
-        const layoutAST = this._buildAST(layoutTokens);
-        const layoutScope = Object.assign({}, baseScope, { $yield: inner });
-        return this._renderAST(layoutAST, layoutScope);
-      }
-
-      return inner;
-    };
-  }
-
-  /**
-   * Compile and immediately render with the given scope.
-   * @param {string} templateStr
-   * @param {object} scope
-   * @param {{ layout?: string }} options
-   * @returns {string}
-   */
-  static render(templateStr, scope = {}, options = {}) {
-    return this.compile(templateStr)(scope, options);
-  }
+  // ─── Async Support ──────────────────────────────────────────────────────────
 
   /**
    * Recursively collect and cache all url: includes reachable from an AST.
    * @param {Array} ast
-   * @param {Set} visited - already-fetched urls to avoid re-fetching
+   * @param {Set} visited
    */
   static async _collectUrls(ast, visited = new Set()) {
     for (const node of ast) {
@@ -816,7 +705,6 @@ class Sketch {
           }
         }
       }
-      // Recurse into branch/body nodes
       for (const key of ['body', 'elseBranch', 'chunks']) {
         if (Array.isArray(node[key])) await this._collectUrls(node[key], visited);
       }
@@ -829,27 +717,16 @@ class Sketch {
   }
 
   /**
-   * Compile a template string into a reusable async render function.
-   * Supports all include sources including url:.
-   * Fetches and caches all reachable url: includes at compile time, then
-   * returns a plain synchronous render function (no await needed to call it).
+   * Compile a template string into a reusable async-safe render function.
+   * Fetches and caches all reachable url: includes at compile time.
    * @param {string} templateStr
    * @returns {Promise<function(scope?: object, options?: { layout?: string }): string>}
    */
   static async compileAsync(templateStr) {
-    const tokens = this._tokenize(templateStr);
-    const ast    = this._buildAST(tokens);
+    const ast = this._buildAST(this._tokenize(templateStr));
     await this._collectUrls(ast);
-    return (scope = {}, options = {}) => {
-      const baseScope = Object.assign({ $: {} }, scope);
-      const inner = this._renderAST(ast, baseScope);
-      if (options.layout) {
-        const layoutAST   = this._buildAST(this._tokenize(options.layout));
-        const layoutScope = Object.assign({}, baseScope, { $yield: inner });
-        return this._renderAST(layoutAST, layoutScope);
-      }
-      return inner;
-    };
+    // After URL prefetching, the sync compiler handles everything
+    return this.compile(templateStr);
   }
 
   /**
