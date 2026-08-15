@@ -34,6 +34,8 @@ class Sketch {
         .replace('ss',   pad(d.getSeconds()));
     },
 
+    unixdate: (v, fmt = 'YYYY-MM-DD') => Sketch._filters.date(Number(v) * 1000, fmt),
+
     currency: (v, symbol = '€', decimals = 2, locale = 'de-DE') => {
       const n = Number(v);
       if (isNaN(n)) return `[invalid number: ${v}]`;
@@ -194,9 +196,26 @@ class Sketch {
       include    — {include key:name} / {include dom:selector} / {include url:path}
   */
 
+  // Splits a {{ }}/{{{ }}} expression on `|` filter-pipe separators, but
+  // treats `||` (JS logical OR, e.g. `usage_history || []`) as NOT a
+  // filter separator -- a naive `.split('|')` tears a `||` in half and
+  // corrupts the expression (confirmed: `JSON.stringify(x || [])`
+  // produced invalid generated JS). A run of two or more consecutive
+  // `|` characters is never a filter pipe (filters are always a lone
+  // `|`), so this only splits on single, standalone pipes.
+  static _splitFilterPipes(inner) {
+    return inner.split(/\|(?!\|)(?<!\|\|)/).map(s => s.trim());
+  }
+
   static _tokenize(template) {
     const tokens = [];
-    const re = /(\{\{\{[\s\S]*?\}\}\}|\{\{[\s\S]*?\}\}|\{\/?\w+[^}]*\})/g;
+    // The single-brace tag alternative excludes `${` (negative lookbehind)
+    // -- otherwise a JS template literal's ${expr} interpolation inside a
+    // flow-script block (raw JS, not templated by Sketch at all) gets
+    // torn out as if it were a {tag}, corrupting the script. Sketch's own
+    // single-brace tags are never written as `${...}`, only bare `{if
+    // ...}`, `{/if}`, etc., so this can't collide with real tag syntax.
+    const re = /(\{\{\{[\s\S]*?\}\}\}|\{\{[\s\S]*?\}\}|(?<!\$)\{\/?\w+[^}]*\})/g;
     let last = 0;
     let match;
 
@@ -209,12 +228,12 @@ class Sketch {
 
       if (raw.startsWith('{{{')) {
         const inner = raw.slice(3, -3).trim();
-        const parts = inner.split('|').map(s => s.trim());
+        const parts = this._splitFilterPipes(inner);
         tokens.push({ type: 'raw', expr: parts[0], filters: parts.slice(1) });
 
       } else if (raw.startsWith('{{')) {
         const inner = raw.slice(2, -2).trim();
-        const parts = inner.split('|').map(s => s.trim());
+        const parts = this._splitFilterPipes(inner);
         tokens.push({ type: 'escaped', expr: parts[0], filters: parts.slice(1) });
 
       } else {
@@ -624,7 +643,12 @@ class Sketch {
     const renderFn   = this._compileAST(ast);
 
     return (scope = {}, options = {}) => {
-      const baseScope = Object.assign({ $: {} }, scope);
+      // $ctx: the full, unflattened scope object as passed in -- for
+      // templates that need "the whole payload" (e.g. dumping raw JSON),
+      // distinct from $ (a separate, pre-existing placeholder) and from
+      // the individual top-level fields merged in below for direct
+      // {{field}} access.
+      const baseScope = Object.assign({ $: {}, $ctx: scope }, scope);
       const inner     = renderFn(this, baseScope);
 
       if (options.layout) {

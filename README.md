@@ -87,6 +87,7 @@ Filters work in both `{{ }}` and `{{{ }}}` contexts.
 | `default` | Fallback if null/empty | `{{ bio \| default:'No bio' }}` |
 | `round` | Round a number | `{{ price \| round:2 }}` |
 | `date` | Format a date | `{{ createdAt \| date:'DD/MM/YYYY' }}` |
+| `unixdate` | Format a Unix-seconds timestamp | `{{ createdAt \| unixdate:'DD/MM/YYYY' }}` |
 | `currency` | Format currency | `{{ price \| currency:'$':'2':'en-US' }}` |
 | `numunits` | Humanize large numbers | `{{ views \| numunits }}` → `1.23M` |
 
@@ -202,21 +203,25 @@ Iterates over **object own keys**. Each iteration receives the key name and `key
 
 ## Inline JavaScript — `{eval}` / `{/eval}`
 
-Execute arbitrary JavaScript inside a template. Variables declared with `const` or `let` inside an `{eval}` block are local to that block — they are **not** visible in the rest of the template.
-
-To pass computed values to the rest of the template, assign them to the special `$` object, which is always available in scope:
+Execute arbitrary JavaScript inside a template. A whole compiled template
+(parent plus any inlined includes) is one flat JS function body, so
+variables declared with `const` or `let` inside an `{eval}` block are
+**not** scoped to that block — they stay visible in the rest of the
+template, including inside included templates, exactly like any other
+local variable declared earlier in the same function:
 
 ```html
 {eval}
-  $.discount  = price > 100 ? 0.15 : 0.05;
-  $.finalPrice = price * (1 - $.discount);
-  $.label      = $.discount > 0.1 ? 'Big Saver' : 'Saver';
+  const discount   = price > 100 ? 0.15 : 0.05;
+  const finalPrice = price * (1 - discount);
+  const label      = discount > 0.1 ? 'Big Saver' : 'Saver';
 {/eval}
 
-<p>{{ $.label }}: {{ $.finalPrice | round:2 | currency }}</p>
+<p>{{ label }}: {{ finalPrice | round:2 | currency }}</p>
 ```
 
-If you don't need a value outside the block — for example, a one-off side effect or a loop — you can skip assigning to `$`:
+If you don't need the value anywhere else — a one-off side effect or a
+loop — just don't bother declaring anything:
 
 ```html
 {eval}
@@ -446,17 +451,22 @@ Sketch.render('{{ a }} + {{ b }} = {{ a + b }}', { a: 1, b: 2 });
 // → "1 + 2 = 3"
 ```
 
-A special `$` object is always injected into scope as an empty object. It is the standard way to pass values computed inside `{eval}` blocks to the rest of the template, since `const`/`let` declared inside `{eval}` are block-scoped and not visible outside:
+Values computed inside an `{eval}` block with `const`/`let` are visible everywhere else in the template too — see [Inline JavaScript](#inline-javascript--eval--eval) above:
 
 ```html
 {eval}
-  $.total = items.reduce((s, i) => s + i.price, 0);
-  $.tax   = $.total * 0.2;
+  const total = items.reduce((s, i) => s + i.price, 0);
+  const tax   = total * 0.2;
 {/eval}
 
-Subtotal: {{ $.total | currency }}
-Tax:      {{ $.tax   | currency }}
+Subtotal: {{ total | currency }}
+Tax:      {{ tax   | currency }}
 ```
+
+Two extra variables are always present in scope, alongside whatever you pass in:
+
+- `$ctx` — the full, unflattened scope object exactly as passed to `render`/`compile`, distinct from the individual top-level fields merged in for direct `{{field}}` access. Useful when a template needs "the whole payload" at once, e.g. dumping it as JSON: `{{ $ctx | json }}`.
+- `$` — an empty object, present for any future/ad-hoc use. Nothing in Sketch itself reads or writes it.
 
 ---
 
@@ -486,12 +496,12 @@ const template = `
   {/if}
 
   {eval}
-    $.inStock    = products.filter(p => p.stock > 0);
-    $.outOfStock = products.filter(p => p.stock === 0);
+    const inStock    = products.filter(p => p.stock > 0);
+    const outOfStock = products.filter(p => p.stock === 0);
   {/eval}
 
-  <h2>In Stock ({{ $.inStock.length }})</h2>
-  {foreach $.inStock as p}
+  <h2>In Stock ({{ inStock.length }})</h2>
+  {foreach inStock as p}
     <div class="card">
       <strong>{{ p.name }}</strong>
       <span>{{ p.price | currency:'$':'2':'en-US' }}</span>
@@ -501,8 +511,8 @@ const template = `
     <p>All products sold out.</p>
   {/foreach}
 
-  {if $.outOfStock.length > 0}
-    <p>{{ $.outOfStock.length }} items currently unavailable.</p>
+  {if outOfStock.length > 0}
+    <p>{{ outOfStock.length }} items currently unavailable.</p>
   {/if}
 `;
 
